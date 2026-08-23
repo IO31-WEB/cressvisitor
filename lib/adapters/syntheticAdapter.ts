@@ -1,6 +1,7 @@
 import type { AnalysisRequest, DataAdapter, LatLng, PropertyType, VisitEvent } from "@/lib/types";
 import { hashStringToSeed, mulberry32, seededGaussian, seededInt } from "@/lib/utils/seed";
 import { geofenceAreaSqMeters, geofenceCenter, sampleRandomPointInGeofence } from "@/lib/geo/polygon";
+import { daysBetween } from "@/lib/utils/format";
 
 // -----------------------------------------------------------------------
 // SyntheticAdapter
@@ -237,6 +238,46 @@ function scaleRange([lo, hi]: [number, number], scale: number, min = 0): [number
   return [scaledLo, scaledHi];
 }
 
+function weightedMean(weights: [number, number][]): number {
+  const total = weights.reduce((s, [, w]) => s + w, 0);
+  return weights.reduce((s, [size, w]) => s + size * w, 0) / total;
+}
+
+/**
+ * How many distinct "regular customer" identities should exist for the
+ * repeat-visitor rate to actually show up correctly in the metrics.
+ *
+ * Bug this replaces: the old version scaled off employeeCount (`max(2,
+ * round(employeeCount * 0.2))`), which floors out at 2 for any small-staff
+ * property type — meaning only 2 unique regulars existed no matter how
+ * many hundreds of visitor parties were generated, so the "repeat vs new"
+ * metric read as ~1% instead of anything resembling profile.repeatVisitorRate.
+ *
+ * The metric that matters (lib/analysis/runAnalysis.ts computeMetrics) is
+ * counted at the CLUSTER level — a regular who visits on 10 different days
+ * still collapses into exactly one cluster with daysObserved > 1. So to
+ * get a cluster-level repeat rate that actually approximates
+ * repeatVisitorRate, the regular-identity pool needs to scale with the
+ * expected TOTAL number of distinct visitor parties over the whole date
+ * range, not with headcount. Solving repeatRate ≈ regularCount / (regularCount
+ * + oneTimers) for regularCount given oneTimers ≈ (1 - rate) * totalPartyInstances
+ * gives regularCount ≈ rate * totalPartyInstances.
+ */
+function computeRegularCount(
+  profile: PropertyProfile,
+  visitorsPerWeekdayRange: [number, number],
+  visitorsPerWeekendRange: [number, number],
+  totalDays: number
+): number {
+  const avgWeekday = (visitorsPerWeekdayRange[0] + visitorsPerWeekdayRange[1]) / 2;
+  const avgWeekend = (visitorsPerWeekendRange[0] + visitorsPerWeekendRange[1]) / 2;
+  const avgDailyVisitors = (avgWeekday * 5 + avgWeekend * 2) / 7;
+  const avgPartySize = Math.max(1, weightedMean(profile.partySizeWeights));
+  const estTotalPartyInstances = Math.max(1, (avgDailyVisitors / avgPartySize) * totalDays);
+  const raw = Math.round(profile.repeatVisitorRate * estTotalPartyInstances);
+  return Math.min(80, Math.max(3, raw));
+}
+
 export class SyntheticAdapter implements DataAdapter {
   readonly name = "synthetic";
 
@@ -266,7 +307,10 @@ export class SyntheticAdapter implements DataAdapter {
     );
     // A handful of "regular" visitor party seeds that recur across days,
     // to model repeat customers rather than every party being a stranger.
-    const regularCount = Math.max(2, Math.round(employeeCount * 0.2));
+    // Sized off expected visitor volume, not headcount — see
+    // computeRegularCount() for why that distinction matters.
+    const totalDays = daysBetween(request.dateRange.start, request.dateRange.end);
+    const regularCount = computeRegularCount(profile, visitorsPerWeekdayRange, visitorsPerWeekendRange, totalDays);
     const regularOrigins = Array.from({ length: regularCount }, () => pickOrigin(centroids, rand));
     // Regular parties keep the SAME device IDs across every day they show
     // up — this is what lets the clustering layer's "repeated co-occurrence
