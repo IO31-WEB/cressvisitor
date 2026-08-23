@@ -15,6 +15,10 @@ html {
 }
 
 /* --- Print / PDF export ----------------------------------------------- */
+@page {
+  margin: 14mm;
+}
+
 @media print {
   body {
     background: white !important;
