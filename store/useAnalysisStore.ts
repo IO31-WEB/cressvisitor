@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AnalysisRequest, AnalysisResult, PropertyType } from "@/lib/types";
+import type { AnalysisRequest, AnalysisResult, Geofence, LatLng, PropertyType } from "@/lib/types";
 import { runAnalysis } from "@/lib/analysis/runAnalysis";
 
 type Status = "idle" | "analyzing" | "ready" | "error";
@@ -13,9 +13,9 @@ type AnalysisStore = {
   lastRequest: AnalysisRequest | null;
   submit: (params: {
     address: string;
-    location: { lat: number; lng: number };
+    location: LatLng;
     propertyType: PropertyType;
-    radiusMeters: number;
+    geofence: Geofence;
     dateRange: { start: string; end: string };
   }) => Promise<void>;
   reset: () => void;
@@ -27,16 +27,10 @@ export const useAnalysisStore = create<AnalysisStore>()((set) => ({
   result: null,
   lastRequest: null,
 
-  submit: async ({ address, location, propertyType, radiusMeters, dateRange }) => {
+  submit: async ({ address, location, propertyType, geofence, dateRange }) => {
     set({ status: "analyzing", error: null });
     try {
-      const request: AnalysisRequest = {
-        address,
-        location,
-        propertyType,
-        dateRange,
-        geofence: { type: "radius", center: location, radiusMeters },
-      };
+      const request: AnalysisRequest = { address, location, propertyType, dateRange, geofence };
       const result = await runAnalysis(request);
       set({ status: "ready", result, lastRequest: request });
     } catch (err) {
