@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 // react-map-gl v7 splits bindings by map engine — this app uses the real
 // Mapbox GL JS engine (react-map-gl/mapbox), not the MapLibre fork.
-import { Map, Source, Layer, Marker } from "react-map-gl/mapbox";
+import { Map, Source, Layer, Marker } from "react-map-gl";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { AnalysisResult } from "@/lib/types";
