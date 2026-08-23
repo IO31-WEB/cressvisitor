@@ -1,12 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
-// react-map-gl v7 splits bindings by map engine — this app uses the real
-// Mapbox GL JS engine (react-map-gl/mapbox), not the MapLibre fork.
-import { Map, Source, Layer, Marker } from "react-map-gl";
+// Using react-map-gl v7's default export (bare "react-map-gl" resolves to
+// the Mapbox GL JS bindings on v7; the /mapbox and /maplibre subpath split
+// was introduced later, in v8).
+import Map, { Source, Layer, Marker } from "react-map-gl";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { AnalysisResult } from "@/lib/types";
+import { circlePolygonPoints, geofenceCenter, geofenceToGeoJsonPolygon, pointsToGeoJsonPolygon } from "@/lib/geo/polygon";
+import { haversineMeters } from "@/lib/geo/hull";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -16,13 +19,37 @@ const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 mapboxgl.accessToken = MAPBOX_TOKEN ?? "";
 
 export function MapboxMap({ result }: { result: AnalysisResult }) {
-  const { request, clusters, tradeAreaDensity } = result;
+  const { request, clusters, tradeAreaDensity, tradeAreaHull } = result;
   const visitorClusters = clusters.filter((c) => c.classification === "visitor");
+  const center = geofenceCenter(request.geofence);
 
-  const geofenceGeoJson = useMemo(() => {
-    if (request.geofence.type !== "radius") return null;
-    return circleGeoJson(request.location, request.geofence.radiusMeters);
-  }, [request]);
+  // Phase 2: renders the ACTUAL geofence shape (circle or hand-drawn
+  // polygon) rather than always drawing a circle.
+  const geofenceGeoJson = useMemo(() => geofenceToGeoJsonPolygon(request.geofence), [request.geofence]);
+
+  const hullGeoJson = useMemo(
+    () => (tradeAreaHull.length >= 3 ? pointsToGeoJsonPolygon(tradeAreaHull) : null),
+    [tradeAreaHull]
+  );
+
+  // Lightweight, clearly-labeled distance rings (straight-line, NOT
+  // drive-time isochrones — see TradeAreaLegend) at 50% and 100% of the
+  // hull's farthest reach from the geofence center.
+  const ringsGeoJson = useMemo(() => {
+    if (tradeAreaHull.length < 3) return null;
+    const maxDist = Math.max(...tradeAreaHull.map((p) => haversineMeters(p, center)));
+    if (!isFinite(maxDist) || maxDist <= 0) return null;
+    const features = [maxDist * 0.5, maxDist].map((r) => {
+      const ring = circlePolygonPoints(center, r, 64);
+      const closed = [...ring, ring[0]!];
+      return {
+        type: "Feature" as const,
+        properties: {},
+        geometry: { type: "LineString" as const, coordinates: closed.map((p) => [p.lng, p.lat]) },
+      };
+    });
+    return { type: "FeatureCollection" as const, features };
+  }, [tradeAreaHull, center]);
 
   const densityGeoJson = useMemo(
     () => ({
@@ -68,20 +95,31 @@ export function MapboxMap({ result }: { result: AnalysisResult }) {
           />
         </Source>
 
-        {geofenceGeoJson && (
-          <Source id="geofence" type="geojson" data={geofenceGeoJson}>
+        {ringsGeoJson && (
+          <Source id="distance-rings" type="geojson" data={ringsGeoJson}>
             <Layer
-              id="geofence-fill"
-              type="fill"
-              paint={{ "fill-color": "#0f1c33", "fill-opacity": 0.05 }}
-            />
-            <Layer
-              id="geofence-line"
+              id="distance-rings-line"
               type="line"
-              paint={{ "line-color": "#0f1c33", "line-width": 1.5, "line-dasharray": [2, 2] }}
+              paint={{ "line-color": "#0f1c33", "line-width": 1, "line-opacity": 0.25, "line-dasharray": [1, 2] }}
             />
           </Source>
         )}
+
+        {hullGeoJson && (
+          <Source id="trade-area-hull" type="geojson" data={hullGeoJson}>
+            <Layer id="hull-fill" type="fill" paint={{ "fill-color": "#2563eb", "fill-opacity": 0.06 }} />
+            <Layer id="hull-line" type="line" paint={{ "line-color": "#2563eb", "line-width": 2.5, "line-opacity": 0.85 }} />
+          </Source>
+        )}
+
+        <Source id="geofence" type="geojson" data={geofenceGeoJson}>
+          <Layer id="geofence-fill" type="fill" paint={{ "fill-color": "#0f1c33", "fill-opacity": 0.05 }} />
+          <Layer
+            id="geofence-line"
+            type="line"
+            paint={{ "line-color": "#0f1c33", "line-width": 1.5, "line-dasharray": [2, 2] }}
+          />
+        </Source>
 
         {visitorClusters.map((c) => (
           <Marker key={c.id} longitude={c.originCentroid.lng} latitude={c.originCentroid.lat}>
@@ -99,19 +137,4 @@ export function MapboxMap({ result }: { result: AnalysisResult }) {
       </Map>
     </div>
   );
-}
-
-function circleGeoJson(center: { lat: number; lng: number }, radiusMeters: number, points = 64) {
-  const coords: [number, number][] = [];
-  const distanceX = radiusMeters / (111320 * Math.cos((center.lat * Math.PI) / 180));
-  const distanceY = radiusMeters / 110574;
-  for (let i = 0; i <= points; i++) {
-    const angle = (i / points) * 2 * Math.PI;
-    coords.push([center.lng + distanceX * Math.cos(angle), center.lat + distanceY * Math.sin(angle)]);
-  }
-  return {
-    type: "Feature" as const,
-    properties: {},
-    geometry: { type: "Polygon" as const, coordinates: [coords] },
-  };
 }
