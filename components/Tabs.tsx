@@ -12,6 +12,7 @@ export function Tabs({
 
   return (
     <div>
+      {/* Tab buttons — hidden in print */}
       <div role="tablist" className="flex gap-1 border-b border-line mb-5 no-print">
         {tabs.map((t) => (
           <button
@@ -30,9 +31,22 @@ export function Tabs({
           </button>
         ))}
       </div>
+
+      {/* Screen: only active tab. Print: all tabs stacked */}
       {tabs.map((t) => (
-        <div key={t.key} role="tabpanel" hidden={active !== t.key} className="print-page">
-          {active === t.key && t.content}
+        <div
+          key={t.key}
+          role="tabpanel"
+          className={clsx(
+            "print-section",
+            active === t.key ? "block" : "hidden print:block"
+          )}
+        >
+          {/* Print-only section title */}
+          <h3 className="hidden print:block text-sm font-semibold text-ink/60 uppercase tracking-wide mb-3 mt-6 first:mt-0">
+            {t.label}
+          </h3>
+          {t.content}
         </div>
       ))}
     </div>
