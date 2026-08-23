@@ -2,6 +2,7 @@ import type { AnalysisRequest, AnalysisResult, MetricSummary, VisitCluster } fro
 import { dataAdapter } from "@/lib/adapters/syntheticAdapter";
 import { buildClusters } from "@/lib/clustering/cluster";
 import { convexHull, kernelDensityGrid } from "@/lib/geo/hull";
+import { isInsideGeofence } from "@/lib/geo/polygon";
 import { daysBetween } from "@/lib/utils/format";
 
 function computeMetrics(clusters: VisitCluster[], dateRange: AnalysisRequest["dateRange"]): MetricSummary {
@@ -45,7 +46,19 @@ function computeMetrics(clusters: VisitCluster[], dateRange: AnalysisRequest["da
 }
 
 export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
-  const events = await dataAdapter.fetchVisits(request);
+  const rawEvents = await dataAdapter.fetchVisits(request);
+
+  // Phase 2: containment is enforced by the pipeline itself, not assumed
+  // from generation. Every event's site-entry point is checked against the
+  // actual drawn geofence (circle or polygon) with the same point-in-polygon
+  // test a real ingestion pipeline would run against raw device pings. The
+  // SyntheticAdapter already samples inside the geofence, so this is a
+  // no-op today by construction — but it's what makes "the actual polygon
+  // geometry" a real constraint on the data rather than a display-only
+  // decoration, and it's the exact hook a future real adapter's raw pings
+  // would need if they ever arrived un-filtered.
+  const events = rawEvents.filter((e) => isInsideGeofence(e.siteEntryPoint, request.geofence));
+
   const clusters = buildClusters(events);
   const metrics = computeMetrics(clusters, request.dateRange);
 
