@@ -1,5 +1,6 @@
 import type { AnalysisRequest, DataAdapter, LatLng, PropertyType, VisitEvent } from "@/lib/types";
 import { hashStringToSeed, mulberry32, seededGaussian, seededInt } from "@/lib/utils/seed";
+import { geofenceAreaSqMeters, geofenceCenter, sampleRandomPointInGeofence } from "@/lib/geo/polygon";
 
 // -----------------------------------------------------------------------
 // SyntheticAdapter
@@ -20,6 +21,13 @@ import { hashStringToSeed, mulberry32, seededGaussian, seededInt } from "@/lib/u
 //                          minutes of each other (families/coworkers
 //                          arriving in one car), with dwell + origin drawn
 //                          from a property-type profile below.
+//
+// Phase 2: the geofence is no longer just a display circle. Every event
+// gets a `siteEntryPoint` sampled from inside the ACTUAL drawn shape
+// (circle or hand-drawn polygon) via lib/geo/polygon.ts, and the overall
+// traffic volume scales with the geofence's real area — draw a bigger lot,
+// get proportionally more ambient device pickup, the same way a larger
+// footprint would in a real panel feed. See computeAreaScale() below.
 //
 // Swap to a real provider by implementing the same DataAdapter interface
 // in a new file under lib/adapters/ and switching DATA_PROVIDER — nothing
@@ -208,6 +216,27 @@ function* dateRangeDays(start: string, end: string): Generator<{ date: string; w
   }
 }
 
+// A drawn geofence's traffic volume scales with its real area relative to
+// the Phase-1 default (a 400m-radius circle, ~50.3 hectares / ~124 acres).
+// Clamped so a tiny sliver or a sprawling multi-block polygon still
+// produces a sane, demoable device count rather than near-zero or absurd.
+const BASELINE_GEOFENCE_AREA_SQM = Math.PI * 400 * 400;
+
+function computeAreaScale(geofence: AnalysisRequest["geofence"]): number {
+  const raw = Math.sqrt(geofenceAreaSqMeters(geofence) / BASELINE_GEOFENCE_AREA_SQM);
+  return Math.min(2.2, Math.max(0.4, raw));
+}
+
+function scaleCount(n: number, scale: number, min = 1): number {
+  return Math.max(min, Math.round(n * scale));
+}
+
+function scaleRange([lo, hi]: [number, number], scale: number, min = 0): [number, number] {
+  const scaledLo = Math.max(min, Math.round(lo * scale));
+  const scaledHi = Math.max(scaledLo, Math.round(hi * scale));
+  return [scaledLo, scaledHi];
+}
+
 export class SyntheticAdapter implements DataAdapter {
   readonly name = "synthetic";
 
@@ -215,20 +244,29 @@ export class SyntheticAdapter implements DataAdapter {
     const seedKey = `${request.address}|${request.dateRange.start}|${request.dateRange.end}|${request.propertyType}`;
     const rand = mulberry32(hashStringToSeed(seedKey));
     const profile = PROFILES[request.propertyType];
-    const center = request.location;
+    // Phase 2: reference point is the geofence's own center — for a radius
+    // geofence that's identical to the property pin, but a hand-drawn
+    // polygon (e.g. an irregular corner lot) may be offset from it.
+    const center = geofenceCenter(request.geofence);
     const centroids = originCentroids(center, rand);
+
+    const areaScale = computeAreaScale(request.geofence);
+    const employeeCount = scaleCount(profile.employeeCount, areaScale);
+    const visitorsPerWeekdayRange = scaleRange(profile.visitorsPerWeekdayRange, areaScale);
+    const visitorsPerWeekendRange = scaleRange(profile.visitorsPerWeekendRange, areaScale);
+    const deliveriesPerDayRange = scaleRange(profile.deliveriesPerDayRange, areaScale);
 
     const events: VisitEvent[] = [];
 
     // Stable employee device roster, reused across every weekday so the
     // clustering layer can actually observe "repeats weekly" behavior.
     const employeeIds = Array.from(
-      { length: profile.employeeCount },
+      { length: employeeCount },
       (_, i) => `emp_${hashStringToSeed(seedKey + "emp" + i).toString(36)}`
     );
     // A handful of "regular" visitor party seeds that recur across days,
     // to model repeat customers rather than every party being a stranger.
-    const regularCount = Math.max(2, Math.round(profile.employeeCount * 0.2));
+    const regularCount = Math.max(2, Math.round(employeeCount * 0.2));
     const regularOrigins = Array.from({ length: regularCount }, () => pickOrigin(centroids, rand));
     // Regular parties keep the SAME device IDs across every day they show
     // up — this is what lets the clustering layer's "repeated co-occurrence
@@ -257,12 +295,13 @@ export class SyntheticAdapter implements DataAdapter {
             originCoarse: origin,
             approachBearingDeg: bearingBetween(origin, center),
             date,
+            siteEntryPoint: sampleRandomPointInGeofence(request.geofence, rand),
           });
         }
       }
 
       // --- Delivery / service (short dwell, scattered) ---------------
-      const deliveryCount = seededInt(rand, ...profile.deliveriesPerDayRange);
+      const deliveryCount = seededInt(rand, ...deliveriesPerDayRange);
       for (let i = 0; i < deliveryCount; i++) {
         const hour = profile.openHour + rand() * (profile.closeHour - profile.openHour);
         const dwell = Math.max(2, 4 + rand() * 8); // 4-12 min
@@ -277,11 +316,12 @@ export class SyntheticAdapter implements DataAdapter {
           originCoarse: origin,
           approachBearingDeg: bearingBetween(origin, center),
           date,
+          siteEntryPoint: sampleRandomPointInGeofence(request.geofence, rand),
         });
       }
 
       // --- Visitor parties --------------------------------------------
-      const [lo, hi] = isWeekend ? profile.visitorsPerWeekendRange : profile.visitorsPerWeekdayRange;
+      const [lo, hi] = isWeekend ? visitorsPerWeekendRange : visitorsPerWeekdayRange;
       const targetVisitors = seededInt(rand, lo, hi);
       let placed = 0;
       let partyIndex = 0;
@@ -319,6 +359,7 @@ export class SyntheticAdapter implements DataAdapter {
             originCoarse: jitteredOrigin,
             approachBearingDeg: bearing + seededGaussian(rand, 0, 8),
             date,
+            siteEntryPoint: sampleRandomPointInGeofence(request.geofence, rand),
           });
         }
 
