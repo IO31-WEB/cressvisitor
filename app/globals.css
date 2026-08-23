@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+}
+
+.card {
+  @apply bg-white border border-line rounded-card shadow-card;
+}
+
+.mapboxgl-popup-content {
+  @apply rounded-card shadow-cardHover;
+}
+
+/* --- Print / PDF export stylesheet ------------------------------------ */
+@media print {
+  body {
+    background: white;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-page {
+    page-break-inside: avoid;
+  }
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #d0d5dd !important;
+  }
+}
