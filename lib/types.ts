@@ -11,6 +11,10 @@ export type Geofence =
   | { type: "radius"; center: LatLng; radiusMeters: number }
   | { type: "polygon"; points: LatLng[] };
 
+/** Convenience alias for the discriminant of Geofence — used by UI state
+ * (mode toggle) without importing the full union. */
+export type GeofenceMode = Geofence["type"];
+
 export type PropertyType =
   | "retail_strip"
   | "restaurant"
@@ -44,6 +48,16 @@ export type VisitEvent = {
   originCoarse: LatLng; // deliberately coarsened (~500m jitter), never home-level
   approachBearingDeg: number; // 0-360, direction traveled from immediately prior
   date: string; // yyyy-mm-dd, convenience for day-bucketing
+  /**
+   * Phase 2: where within the geofence this device was actually detected
+   * (as opposed to originCoarse, which is where the visitor came FROM).
+   * Sampled inside the real geofence shape — circle or polygon — via
+   * lib/geo/polygon.ts, and re-validated against that same shape by the
+   * analysis pipeline (lib/analysis/runAnalysis.ts) with a point-in-polygon
+   * test. This is what makes a hand-drawn polygon a real constraint on the
+   * data rather than a cosmetic overlay.
+   */
+  siteEntryPoint: LatLng;
 };
 
 /** A probabilistic grouping of devices believed to be one visiting party. */
