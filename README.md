@@ -1,4 +1,3 @@
-
 # CRESSOLUTIONS — Location Intelligence (Phase 1)
 
 Geofenced visit analytics and observed-trade-area module for the CRES
@@ -166,11 +165,97 @@ store/
 4. Build command `npm run build`, output is the standard Next.js App
    Router build — no special Vercel config needed.
 
-## Known Phase 1 simplifications (be honest with the client about these)
+## Phase 2 — Polygon geofences, better trade-area visuals, and a cleaner report
 
-- Geofence is radius-only in the UI; the `Geofence` type already supports
-  polygons (`lib/types.ts`), and a polygon-drawing map control is the
-  natural Phase 2 addition.
+### Drawing a precise geofence
+
+The address form is now two stages: **find the property**, then **configure
+the geofence**. In the configure step, toggle between:
+
+- **Radius (quick)** — the original slider, unchanged.
+- **Draw polygon (precise)** — click/tap the map to drop boundary points
+  around the actual property line. Live area (acres) updates as you go.
+  Use **Undo point** to remove the last vertex or **Clear polygon** to start
+  over; switching back to **Radius** is an implicit full reset.
+
+Drawing works on both map backends — the interactive Mapbox map (click to
+add a vertex) and the zero-key SVG schematic (tap/click the same way), so
+polygon drawing never depends on having a Mapbox token. On mobile, taps
+register as clicks in all major browsers; if precise drawing is fiddly on a
+small screen, radius mode remains the one-tap fallback.
+
+### How the polygon actually flows through the pipeline
+
+This isn't a display-only shape. Every stage uses the same geometry:
+
+1. **`lib/geo/polygon.ts`** is the single source of truth: point-in-polygon
+   (ray casting), point-in-circle, area (shoelace formula), centroid, and a
+   seeded rejection-sampler for picking random points inside either shape.
+2. **`SyntheticAdapter`** samples a `siteEntryPoint` for every visit event
+   from inside the real geofence (`sampleRandomPointInGeofence`), and scales
+   overall traffic volume by the geofence's actual area relative to the
+   Phase-1 default (a 400m-radius circle) — draw a bigger lot, get
+   proportionally more synthetic device pickup.
+3. **`runAnalysis.ts`** filters every event through `isInsideGeofence()`
+   before clustering — the same point-in-polygon test, applied as a real
+   pipeline constraint rather than trusted from generation.
+4. **Both map renderers** (`MapboxMap.tsx`, `SchematicMap.tsx`) draw the
+   actual shape via `geofenceToGeoJsonPolygon` / `geofenceRingPoints` — a
+   drawn polygon renders as the polygon you drew, not an approximated circle.
+
+### Trade-area visualization
+
+- The convex hull now renders as a clearly distinct solid blue outline
+  (thicker, higher-opacity) separate from the dashed navy geofence boundary.
+- Two lightweight **distance rings** (50% / 100% of the hull's farthest
+  reach from the geofence center) give a rough sense of trade-area extent.
+  These are straight-line rings, **not** drive-time isochrones — labeled as
+  such in the legend and the schematic map's caption so they're never
+  mistaken for routing data.
+- A new `TradeAreaLegend` sits under the map on both the interactive Map tab
+  and the printed report, explaining every layer.
+
+### Report / PDF export
+
+The print stylesheet (existing `@media print` approach, no PDF library) now
+produces, in order: a print-only cover block (report title, generated
+timestamp, and the synthetic-data honesty note — since the app's navy header
+badge is hidden on paper), the full property/parameter summary, the map with
+geofence + hull + legend, the complete metrics dashboard, and the full
+unfiltered parties list regardless of which filter chip was selected on
+screen. All interactive chrome (the form, tab buttons, filter chips, PDF
+button itself) is hidden via the existing `.no-print` / `print:` rules.
+
+### New/changed files
+
+```
+lib/geo/polygon.ts              # NEW — point-in-polygon, area, GeoJSON helpers, seeded sampling
+lib/geo/projection.ts           # NEW — invertible local projector for the drawing surface
+lib/types.ts                    # + VisitEvent.siteEntryPoint, GeofenceMode alias
+lib/adapters/syntheticAdapter.ts# geofence-shape-aware generation + area-based volume scaling
+lib/analysis/runAnalysis.ts     # point-in-polygon containment filter before clustering
+store/useAnalysisStore.ts       # submit() now takes a full Geofence, not just a radius
+components/AddressSearch.tsx    # two-stage locate -> configure flow
+components/GeofenceEditor.tsx   # NEW — mode toggle, radius slider / polygon controls
+components/GeofenceMapMapbox.tsx    # NEW — Mapbox click-to-draw surface
+components/GeofenceMapSchematic.tsx # NEW — zero-key SVG click-to-draw surface
+components/MapboxMap.tsx        # polygon geofence rendering, hull outline, distance rings
+components/SchematicMap.tsx     # same, for the zero-key fallback
+components/ResultsPanel.tsx     # geofence-aware header text, print cover block, legend
+components/TradeAreaLegend.tsx  # NEW — print-friendly map legend
+app/globals.css                 # + @page margin
+```
+
+`Tabs.tsx` and `PartyList.tsx`'s existing print handling (force all tab
+panels visible on paper, always render the full unfiltered party list in a
+separate `print:block` section) already met the Phase 2 report requirements
+and needed no changes.
+
+
+- ~~Geofence is radius-only in the UI~~ — resolved in Phase 2 (polygon
+  drawing, both map backends). Editing an existing polygon is still
+  add/undo/clear-based rather than drag-to-reshape individual vertices —
+  a natural Phase 3 addition if precision editing turns out to matter.
 - PDF export uses the browser print stylesheet (`app/globals.css` `@media
   print` block + `PdfExportButton.tsx`) rather than a server-rendered PDF
   library — fast to ship, looks clean, but the client controls print
