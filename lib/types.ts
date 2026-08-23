@@ -68,6 +68,15 @@ export type VisitCluster = {
   confidence: number; // 0-1
   arrivalWindow: { start: string; end: string };
   avgDwellMinutes: number;
+  /**
+   * Mean local time-of-day of arrival across every observed occurrence,
+   * 0-24 decimal (e.g. 9.5 = 9:30am). For a cluster observed on only one
+   * day this is just that day's arrival time; for a multi-day cluster it's
+   * what the UI shows instead of a raw arrivalWindow start/end range,
+   * since two different days' clock times side-by-side reads as backwards
+   * even when the underlying chronology is correct.
+   */
+  avgArrivalHour: number;
   originCentroid: LatLng;
   classification: "visitor" | "employee" | "delivery_service";
   classificationReason: string;
