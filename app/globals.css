@@ -14,19 +14,53 @@ html {
   @apply rounded-card shadow-cardHover;
 }
 
-/* --- Print / PDF export stylesheet ------------------------------------ */
+/* --- Print / PDF export ----------------------------------------------- */
 @media print {
   body {
-    background: white;
+    background: white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
-  .no-print {
+
+  /* Hide interactive chrome */
+  .no-print,
+  form,
+  header,
+  [role="tablist"],
+  button {
     display: none !important;
   }
+
+  /* Force every tab panel visible and stacked */
+  .print-section,
+  .print-section.hidden {
+    display: block !important;
+  }
+
   .print-page {
     page-break-inside: avoid;
+    break-inside: avoid;
   }
+
   .card {
     box-shadow: none !important;
     border: 1px solid #d0d5dd !important;
+    break-inside: avoid;
+  }
+
+  /* Give the map more breathing room on paper */
+  .mapboxgl-map {
+    height: 420px !important;
+  }
+
+  /* Cleaner metric grid on paper */
+  .grid {
+    gap: 12px !important;
+  }
+
+  /* Make sure long party lists don’t get cut off awkwardly */
+  .max-h-\[560px\] {
+    max-height: none !important;
+    overflow: visible !important;
   }
 }
