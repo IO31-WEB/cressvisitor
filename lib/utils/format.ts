@@ -16,6 +16,17 @@ export function formatTime(iso: string): string {
   });
 }
 
+/** Formats a 0-24 decimal hour (e.g. 9.5) as a clock time (e.g. "9:30 AM").
+ * Used for a cluster's avgArrivalHour, which has no associated date — a
+ * single representative time-of-day, not a specific day's timestamp. */
+export function formatHourOfDay(hour: number): string {
+  const h = Math.floor(((hour % 24) + 24) % 24);
+  const m = Math.round((hour - Math.floor(hour)) * 60);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
 export function formatNumber(n: number): string {
   return new Intl.NumberFormat("en-US").format(Math.round(n));
 }
