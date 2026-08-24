@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AnalysisResult, VisitCluster } from "@/lib/types";
-import { formatMinutes, formatTime } from "@/lib/utils/format";
+import { formatMinutes, formatTime, formatHourOfDay } from "@/lib/utils/format";
 import clsx from "clsx";
 
 type Filter = "all" | VisitCluster["classification"];
@@ -99,6 +99,23 @@ export function PartyList({ result }: { result: AnalysisResult }) {
   );
 }
 
+/**
+ * A cluster's arrivalWindow start/end are real chronological timestamps,
+ * but for a multi-day cluster they land on different days — formatting
+ * both as clock-time-only (e.g. "9:40 AM–8:39 AM") reads as backwards even
+ * though the underlying order is correct. For anything observed on more
+ * than one day, show the mean time-of-day instead of a raw range; same-day
+ * clusters keep the exact range since there's no date ambiguity there.
+ */
+function arrivalLabel(c: VisitCluster): string {
+  if (c.daysObserved > 1) {
+    return `~${formatHourOfDay(c.avgArrivalHour)} typical arrival`;
+  }
+  return c.arrivalWindow.start !== c.arrivalWindow.end
+    ? `${formatTime(c.arrivalWindow.start)}–${formatTime(c.arrivalWindow.end)}`
+    : formatTime(c.arrivalWindow.start);
+}
+
 function PartyRow({ cluster: c }: { cluster: VisitCluster }) {
   return (
     <div className="p-4 hover:bg-paper/60 transition-colors print:break-inside-avoid">
@@ -113,12 +130,7 @@ function PartyRow({ cluster: c }: { cluster: VisitCluster }) {
             >
               {CLASS_LABEL[c.classification]}
             </span>
-            <span className="text-xs text-ink/40">
-              {formatTime(c.arrivalWindow.start)}
-              {c.arrivalWindow.start !== c.arrivalWindow.end
-                ? `–${formatTime(c.arrivalWindow.end)}`
-                : ""}
-            </span>
+            <span className="text-xs text-ink/40">{arrivalLabel(c)}</span>
           </div>
           <p className="mt-1.5 text-sm text-ink/70">{c.classificationReason}</p>
         </div>
