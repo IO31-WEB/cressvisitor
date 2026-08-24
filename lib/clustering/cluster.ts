@@ -230,6 +230,7 @@ export function buildClusters(events: VisitEvent[]): VisitCluster[] {
         end: new Date(Math.max(...arrivalEnds)).toISOString(),
       },
       avgDwellMinutes: Math.round(avgDwellMinutes),
+      avgArrivalHour,
       originCentroid: { lat: avgLat, lng: avgLng },
       classification,
       classificationReason: reason,
